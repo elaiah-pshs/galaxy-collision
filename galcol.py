@@ -639,3 +639,213 @@ def anim_two_disks_3d(data, N1, xlim=None, ylim=None, zlim=None, time=None, name
     anim = FuncAnimation(fig, update, frames=len(data), interval=10, blit=True)
 
     anim.save(name + '.gif')
+    print("done")
+
+
+
+
+
+def evolve_two_disks_modified(primary, secondary, time_step=0.1*unit.Myr, N_steps=1000, N_snapshots=100):
+    '''
+    evolves primary and secondary disk using Leapfrog integration
+
+    args: dictionaries of primary and secondary galaxy,
+          numerical timestep, number of timesteps,
+          number of snapshots
+
+    returns: array of snapshot times,
+             array of position snapshots (spatial coordinates of centers and stars)
+             array of velocity snapshots (velocity vectors of centers and stars)
+    '''
+    dt = time_step.to(unit.s).value
+
+    r_min1 = primary['softening']*primary['radius'].to(unit.m).value
+    r_min2 = secondary['softening']*secondary['radius'].to(unit.m).value
+
+    N1, N2 = primary['N_stars'], secondary['N_stars']
+
+    # mass, position and velocity of primary galactic center
+    M1 = primary['mass'].to(unit.kg).value
+    X1, Y1, Z1 = primary['center_pos'].to(unit.m).value
+    V1_x, V1_y, V1_z = primary['center_vel'].to(unit.m/unit.s).value
+
+    # mass, position and velocity of secondary galactic center
+    M2 = secondary['mass'].to(unit.kg).value
+    X2, Y2, Z2 = secondary['center_pos'].to(unit.m).value
+    V2_x, V2_y, V2_z = secondary['center_vel'].to(unit.m/unit.s).value
+
+    # stellar coordintes of primary
+    x = primary['stars_pos'][0].to(unit.m).value
+    y = primary['stars_pos'][1].to(unit.m).value
+    z = primary['stars_pos'][2].to(unit.m).value
+
+    # stellar coordintes of secondary
+    x = np.append(x, secondary['stars_pos'][0].to(unit.m).value)
+    y = np.append(y, secondary['stars_pos'][1].to(unit.m).value)
+    z = np.append(z, secondary['stars_pos'][2].to(unit.m).value)
+
+    # stellar velocities of primary
+    v_x = primary['stars_vel'][0].to(unit.m/unit.s).value
+    v_y = primary['stars_vel'][1].to(unit.m/unit.s).value
+    v_z = primary['stars_vel'][2].to(unit.m/unit.s).value
+
+    # stellar velocities of secondary
+    v_x = np.append(v_x, secondary['stars_vel'][0].to(unit.m/unit.s).value)
+    v_y = np.append(v_y, secondary['stars_vel'][1].to(unit.m/unit.s).value)
+    v_z = np.append(v_z, secondary['stars_vel'][2].to(unit.m/unit.s).value)
+
+    # array to store snapshots of all positions (centers and stars)
+    pos_snapshots = np.zeros(shape=(N_snapshots+1,3,N1+N2+2))
+    pos_snapshots[0] = [np.append([X1,X2], x), np.append([Y1,Y2], y), np.append([Z1,Z2], z)]
+    # array to store snapshots of all velocities (centers and stars)
+    vel_snapshots = np.zeros(shape=(N_snapshots+1,3,N1+N2+2))
+    vel_snapshots[0] = [np.append([V1_x,V2_x], v_x), np.append([V1_y,V2_y], v_y), np.append([V1_z,V2_z], v_z)]
+    #print(snapshots.shape)
+
+    # number of steps per snapshot
+    div = max(int(N_steps/N_snapshots), 1)
+
+    print("Solving equations of motion for two galaxies (Leapfrog integration)")
+
+    for n in range(1,N_steps+1):
+
+        # radial distances from centers with softening
+        r1 = np.maximum(np.sqrt((X1 - x)**2 + (Y1 - y)**2 + (Z1 - z)**2), r_min1)
+        r2 = np.maximum(np.sqrt((X2 - x)**2 + (Y2 - y)**2 + (Z2 - z)**2), r_min2)
+        #print("\nr {:.6e} {:.6e} {:.6e} {:.6e}".format(r1[0],r2[0],r1[N1],r2[N1]))
+
+        # update velocities of stars (acceleration due to gravity of centers)
+        v_x += G.value*(M1*(X1 - x)/r1**3 + M2*(X2 - x)/r2**3) * dt
+        v_y += G.value*(M1*(Y1 - y)/r1**3 + M2*(Y2 - y)/r2**3) * dt
+        v_z += G.value*(M1*(Z1 - z)/r1**3 + M2*(Z2 - z)/r2**3) * dt
+        #print("v_x {:.1f} {:.1f}".format(v_x[0],v_x[N1]))
+
+        # update positions of stars
+        x += v_x*dt
+        y += v_y*dt
+        z += v_z*dt
+        #print("x {:.6e} {:.6e}".format(x[0],x[N1]))
+
+        # distance between centers
+        D_sqr_min = (r_min1+r_min2)**2
+        D_cubed = (max((X1 - X2)**2 + (Y1 - Y2)**2 + (Z1 - Z2)**2, D_sqr_min))**(3/2)
+
+        # gravitational acceleration of primary center
+        A1_x = G.value*M2*(X2 - X1)/D_cubed
+        A1_y = G.value*M2*(Y2 - Y1)/D_cubed
+        A1_z = G.value*M2*(Z2 - Z1)/D_cubed
+
+        # update velocities of centers (constant center-of-mass velocity)
+        V1_x += A1_x*dt; V2_x -= (M1/M2)*A1_x*dt
+        V1_y += A1_y*dt; V2_y -= (M1/M2)*A1_y*dt
+        V1_z += A1_z*dt; V2_z -= (M1/M2)*A1_z*dt
+        #print("V {:.1f} {:.1f} {:.1f}".format(V1_x,V2_x,(M1*V1_x+M2*V2_x)/(M1+M2)))
+
+        # update positions of centers
+        X1 += V1_x*dt; X2 += V2_x*dt
+        Y1 += V1_y*dt; Y2 += V2_y*dt
+        Z1 += V1_z*dt; Z2 += V2_z*dt
+        #print("X {:.6e} {:.6e} {:.6e}".format(X1,X2,X1+X2))
+
+        if n % div == 0:
+            i = int(n/div)
+            pos_snapshots[i] = [np.append([X1,X2], x), np.append([Y1,Y2], y), np.append([Z1,Z2], z)]
+            vel_snapshots[i] = [np.append([V1_x,V2_x], v_x), np.append([V1_y,V2_y], v_y), np.append([V1_z,V2_z], v_z)]
+
+        # fraction of computation done
+        print("\r{:3d} %".format(int(100*n/N_steps)), end="")
+
+    time = np.linspace(0*time_step, N_steps*time_step, N_snapshots+1, endpoint=True)
+    print(" (stopped at t = {:.1f})".format(time[-1]))
+
+    pos_snapshots *= unit.m
+    vel_snapshots = vel_snapshots * unit.m / unit.s
+
+    return time, pos_snapshots.to(unit.kpc), vel_snapshots
+
+def show_orbits_3d_modified(stars, data, xlim=None, ylim=None, zlim=None):
+    '''
+    plots orbits of stars in xy-plane
+
+    args: array of star indices,
+          snapshots returned by evolve_two_disk
+    '''
+    fig = plt.figure(figsize=(10,10), dpi=100)
+    ax = fig.add_subplot(111, projection='3d')
+    
+    ax.set_aspect('equal')
+    if xlim != None: ax.set_xlim(xlim[0], xlim[1])
+    if ylim != None: ax.set_ylim(ylim[0], ylim[1])
+    if zlim != None: ax.set_zlim(zlim[0], zlim[1])
+
+    for n in stars:
+        orbit = data[:,:,n].transpose()
+        ax.plot(orbit[0], orbit[1], orbit[2], lw=1)
+
+    ax.set_xlabel(r'$x$ [kpc]', fontsize=12)
+    ax.set_ylabel(r'$y$ [kpc]', fontsize=12)
+    ax.set_zlabel(r'$z$ [kpc]', fontsize=12)
+
+def plot_specific_orbital_energy(m_target, m_intruder, sample, time, pos_data, vel_data):
+    '''
+    plots the specific orbital energy of a sample of stars on the xy-plane
+
+    args: array of star indices,
+          position snapshots returned by evolve_two_disk_modified,
+          velocity snapshots returned by evolve_two_disk_modified
+    '''
+    fig, ax = plt.subplots(figsize=(10,10), dpi=100)
+
+    pos_data = pos_data.to(unit.m)
+
+    for n in sample:
+        orbit = pos_data[:,:,n].transpose()
+        velocity = vel_data[:,:,n].transpose()
+        specific_energies = []
+
+        for i in range(0, 101):
+            d_to_target = np.sqrt((orbit[0][i].value - pos_data[i][0][1].value)**2 + (orbit[1][i].value - pos_data[i][1][1].value)**2 + (orbit[2][i].value - pos_data[i][2][1].value)**2)
+            d_to_intruder = np.sqrt((orbit[0][i].value - pos_data[i][0][0].value)**2 + (orbit[1][i].value - pos_data[i][1][0].value)**2 + (orbit[2][i].value - pos_data[i][2][0].value)**2)
+            current_vel = np.sqrt((velocity[0][i].value)**2 + (velocity[1][i].value)**2 + (velocity[2][i].value)**2)
+            specific_energies = np.append(specific_energies, 0.5 * ((current_vel) ** 2) + G.value * m_target / d_to_target + G.value * m_intruder / d_to_intruder)
+
+        ax.plot(time, specific_energies, lw=1)
+
+    # for n in stars:
+    #     orbit = data[:,:,n].transpose()
+    #     ax.plot(orbit[0], orbit[1], lw=1)
+
+    # ax.set_xlim(0, 500)
+    # ax.set_ylim(1e11, 1e13)
+
+    ax.set_xlabel(r'$time$ [Myr]', fontsize=12)
+    ax.set_ylabel(r'$specific orbital energy$ [J/kg]', fontsize=12)
+
+if __name__ == "__main__":
+    galaxies = {
+        'intruder' : parameters(
+            # mass in solar masses
+            1e10, 
+            # disk radius in kpc
+            5, 
+            # Cartesian coordinates (x,y,z) of initial position in kpc 
+            (0,0,10), 
+            # x-, y-, z-components of initial velocity in km/s
+            (0,0,-75),
+            # normal to galactic plane (disk is in xy-plane)
+            (0,0,1), 
+            # number of rings (each ring will be randomly populated with 1000/5 = 200 stars)
+            5, 
+            # total number of stars
+            1000, 
+            # softening factor defines inner edge of disk (in units of disk radius)
+            0.025),
+        'target' : parameters(5e10, 10, (0,0,-10), (0,0,50), (0,0,1), 10, 4000, 0.025),
+    }
+
+    init_disk(galaxies['intruder'])
+    init_disk(galaxies['target'])
+        
+    t, data = evolve_two_disks(galaxies['target'], galaxies['intruder'], N_steps=10000, N_snapshots=100, time_step=0.05*unit.Myr)
+    
+    anim_two_disks_3d(data, galaxies['target']['N_stars'], [-15,15], [-15,15], [-15,15], t, name='galaxy collision 2')
